@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.Python
+.venv/
+env/
+*.egg-info/
+
+# PyTorch / training outputs
+runs/
+*.pt
+*.pth
+sanity_check.png
+
+# Datasets (never commit these -- too large, and often licensed for redistribution limits)
+LOLdataset/
+*.zip
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Jupyter
+.ipynb_checkpoints/
