@@ -1,3 +1,23 @@
+"""
+Stage 2: Baseline training script.
+
+Two modes, and you should run them in this order:
+
+1. OVERFIT TEST (do this first, always):
+   python train_baseline.py --root /path/to/LOLdataset --overfit_n 8 --epochs 200
+
+   If the model can't drive the loss near zero on 8 memorized images, nothing
+   downstream (Retinex, multi-scale, attention) will work either. This is the
+   cheapest bug-catching step available — don't skip it.
+
+2. FULL TRAINING (only after the overfit test passes):
+   python train_baseline.py --root /path/to/LOLdataset --epochs 100
+
+Outputs go to --out_dir:
+    runs/baseline/checkpoints/epoch_N.pt   -- model weights
+    runs/baseline/samples/epoch_N.png      -- low | prediction | high, side by side
+"""
+
 import argparse
 import os
 

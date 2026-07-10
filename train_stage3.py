@@ -1,51 +1,81 @@
+"""
+Stage 3: Retinex training script.
+
+Same overfit-first discipline as Stage 2:
+
+1. OVERFIT TEST (run first):
+   python train_stage3.py --root /path/to/LOLdataset --overfit_n 8 --epochs 200
+
+2. FULL TRAINING (only after overfit passes):
+   python train_stage3.py --root /path/to/LOLdataset --epochs 100
+
+Loss = pixel loss + lambda_recon * retinex_recon_loss + lambda_smooth * smoothness_loss
+
+Both lambdas default small on purpose -- introduce them gently and increase only
+if training is stable. If you see loss spike or NaN early on, it's almost always
+the L -> R = I/L division; lower --lambda_smooth first, and if that doesn't help,
+raise the clamp minimum in IlluminationNet.forward (models/retinex.py).
+
+Outputs go to --out_dir:
+    runs/stage3/checkpoints/epoch_N.pt
+    runs/stage3/samples/epoch_N.png     -- rows: low / prediction / high
+    runs/stage3/samples/epoch_N_RL.png  -- rows: R (reflectance) / L (illumination, pre-correction)
+"""
+
 import argparse
 import os
+
 import torch
 import torch.nn.functional as F
 import torchvision.utils as vutils
-from torch.utils.data import DataLoader , Subset
+from torch.utils.data import DataLoader, Subset
 
 from data.dataset import LowLightPairDataset
-from models.retinex import RetinexExposureNet , retinex_recon_loss , structure_aware_smoothness
+from models.retinex import RetinexExposureNet, retinex_recon_loss, structure_aware_smoothness
+
 
 def main(args):
-    device = "cuda"  if torch.cuda.is_available() else "cpu"
-    print("device : ", device)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print("device:", device)
 
-    train_ds = LowLightPairDataset(args.root , split= "our485", crop_size = args.crop_size , train = True)
+    train_ds = LowLightPairDataset(args.root, split="our485", crop_size=args.crop_size, train=True)
 
     if args.overfit_n:
-        idx = list(range(min(args.overfit_n , len(train_ds))))
-        train_ds = Subset(train_ds , idx)
-        print(f"overfit mode training on {len(train_ds)} images only")
+        idx = list(range(min(args.overfit_n, len(train_ds))))
+        train_ds = Subset(train_ds, idx)
+        print(f"[overfit mode] training on {len(train_ds)} images only")
 
-    train_loader = DataLoader(train_ds , batch_size = args.batch_size , shuffle = True, num_workers= args.num_workers , drop_last = True)
-    model = RetinexExposureNet(channels = args.channels, iters = args.iters).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr = args.lr)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer , T_max = args.epochs)
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
+                               num_workers=args.num_workers, drop_last=True)
 
-    ckpt_dir = os.path.join(args.out_dir , "checkpoints")
+    model = RetinexExposureNet(channels=args.channels, iters=args.iters).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+
+    ckpt_dir = os.path.join(args.out_dir, "checkpoints")
     sample_dir = os.path.join(args.out_dir, "samples")
-    os.makedirs(ckpt_dir , exist_ok = True)
-    os.makedirs(sample_dir , exist_ok = True)
+    os.makedirs(ckpt_dir, exist_ok=True)
+    os.makedirs(sample_dir, exist_ok=True)
 
     for epoch in range(args.epochs):
         model.train()
-        epoch_loss , epoch_pixel , epoch_recon , epoch_smooth = 0 ,0 , 0 , 0
-        last_batch =  None
+        epoch_loss, epoch_pixel, epoch_recon, epoch_smooth = 0.0, 0.0, 0.0, 0.0
+        last_batch = None
 
         for low, high, names in train_loader:
-            low , high = low.to(device), high.to(device)
+            low, high = low.to(device), high.to(device)
 
-            out , R , L , L_corrected = model(low)
-            pixel_loss = F.l1_loss(out , high)
-            recon_loss = retinex_recon_loss(R , L , low)
-            smooth_loss = structure_aware_smoothness(L , low)
+            out, R, L, L_corrected = model(low)
+
+            pixel_loss = F.l1_loss(out, high)
+            recon_loss = retinex_recon_loss(R, L, low)
+            smooth_loss = structure_aware_smoothness(L, low)
+
             loss = pixel_loss + args.lambda_recon * recon_loss + args.lambda_smooth * smooth_loss
 
             optimizer.zero_grad()
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.paramters(),max_norm = 5.0)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)  # guard against R = I/L blowups
             optimizer.step()
 
             bs = low.size(0)
@@ -53,42 +83,41 @@ def main(args):
             epoch_pixel += pixel_loss.item() * bs
             epoch_recon += recon_loss.item() * bs
             epoch_smooth += smooth_loss.item() * bs
-            last_batch = (low , high , out ,R , L)
+            last_batch = (low, high, out, R, L)
 
         scheduler.step()
         n = len(train_loader.dataset)
         print(f"epoch {epoch + 1}/{args.epochs}  "
-            f"total={epoch_loss / n:.4f}  pixel={epoch_pixel / n:.4f}  "
-            f"recon={epoch_recon / n:.4f}  smooth={epoch_smooth / n:.4f}  "
-            f"lr={scheduler.get_last_lr()[0]:.2e}")
- 
+              f"total={epoch_loss / n:.4f}  pixel={epoch_pixel / n:.4f}  "
+              f"recon={epoch_recon / n:.4f}  smooth={epoch_smooth / n:.4f}  "
+              f"lr={scheduler.get_last_lr()[0]:.2e}")
+
         if (epoch + 1) % args.sample_every == 0 or epoch == args.epochs - 1:
             save_samples(last_batch, epoch, sample_dir)
- 
+
         if (epoch + 1) % args.ckpt_every == 0 or epoch == args.epochs - 1:
             ckpt_path = os.path.join(ckpt_dir, f"epoch_{epoch + 1}.pt")
             torch.save(model.state_dict(), ckpt_path)
             print(f"saved checkpoint: {ckpt_path}")
 
-def save_samples(last_batch, epoch , sample_dir , n = 4):
+
+def save_samples(last_batch, epoch, sample_dir, n=4):
     low, high, out, R, L = last_batch
     n = min(n, low.size(0))
- 
+
     grid = vutils.make_grid(
         torch.cat([low[:n].cpu(), out[:n].clamp(0, 1).cpu(), high[:n].cpu()], dim=0), nrow=n
     )
     vutils.save_image(grid, os.path.join(sample_dir, f"epoch_{epoch + 1}.png"))
- 
+
     # R and L visualized separately -- check these are NOT degenerate
     # (degenerate case: L looks like flat gray ~1.0 everywhere, R looks identical to low)
     L_vis = L[:n].repeat(1, 3, 1, 1).cpu()  # expand single-channel L to 3 channels for viewing
     R_vis = R[:n].clamp(0, 1).cpu()
     rl_grid = vutils.make_grid(torch.cat([R_vis, L_vis], dim=0), nrow=n)
     vutils.save_image(rl_grid, os.path.join(sample_dir, f"epoch_{epoch + 1}_RL.png"))
- 
+
     print(f"saved samples for epoch {epoch + 1} (main grid + R/L grid)")
-
-
 
 
 if __name__ == "__main__":
@@ -110,3 +139,4 @@ if __name__ == "__main__":
     parser.add_argument("--ckpt_every", type=int, default=20)
     args = parser.parse_args()
     main(args)
+    
