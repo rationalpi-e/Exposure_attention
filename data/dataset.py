@@ -1,5 +1,5 @@
 '''
-This program check all the files and images load properly in the given format.
+Stage 1: This program check all the files and images load properly in the given format.
     LOLDataset/
             our485/
                 low/    *.png
