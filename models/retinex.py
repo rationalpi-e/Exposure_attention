@@ -1,9 +1,9 @@
 """
 Stage 3: Retinex split + smoothness.
 
-Physical model: I(x) = R(x) * L(x)  (reflectance * illumination)
+Physical model: I(x,y) = R(x,y) * L(x,y)  (reflectance * illumination)
 
-Instead of correcting the raw RGB image directly (Stage 2), we now:
+Instead of correcting the raw RGB image directly ,now:
   1. Estimate the illumination map L from the input
   2. Derive reflectance R = I / L
   3. Apply the brightening curve ONLY to L
@@ -40,7 +40,7 @@ class IlluminationNet(nn.Module):
         h = self.relu(self.conv1(x))
         h = self.relu(self.conv2(h))
         L = torch.sigmoid(self.conv3(h))
-        return L.clamp(min=1e-2)  # avoid near-zero illumination -> division blowup in R = I/L
+        return L.clamp(min=1e-2)  # avoid near-zero illumination -> then R becomes infinity
 
 
 class IllumCurveNet(nn.Module):
