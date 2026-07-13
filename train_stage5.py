@@ -42,7 +42,8 @@ def main(args):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("device:", device)
 
-    train_ds = LowLightPairDataset(args.root, split="our485", crop_size=args.crop_size, train=True)
+    train_ds = LowLightPairDataset(args.root, split="our485", crop_size=args.crop_size,
+                                    train=True, augment=(args.overfit_n == 0))
 
     if args.overfit_n:
         idx = list(range(min(args.overfit_n, len(train_ds))))

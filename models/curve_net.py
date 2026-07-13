@@ -7,8 +7,7 @@ iteratively to brighten the image:
     LE_n(x) = LE_{n-1}(x) + A(x) * LE_{n-1}(x) * (1 - LE_{n-1}(x))
 
 This is the Zero-DCE-style correction curve: bounded, monotonic, differentiable.
-
-No Retinex split, no multi-scale, no attention yet as this
+No Retinex split, no multi-scale, no attention yet — that's intentional. This
 stage only proves the basic "network predicts a curve that brightens the image
 correctly" mechanism works, on a single scale, with one loss term.
 """
@@ -18,13 +17,20 @@ import torch.nn as nn
 
 
 class CurveNet(nn.Module):
-    """Predicts a per-pixel curve parameter map A(x) in (-1, 1)."""
+    """Predicts a per-pixel curve parameter map A(x) in (-1, 1).
+
+    conv2/conv3 use dilation=2 to expand the receptive field from 7x7 to 13x13
+    without adding depth or many extra parameters -- this matters because a too-small
+    receptive field causes alpha to collapse toward a near-constant value (low spatial
+    variance) instead of a genuinely input-adaptive correction. Check this by running
+    diagnose_alpha.py: if alpha's std is very low (~0.04), that's this problem.
+    """
 
     def __init__(self, channels=32):
         super().__init__()
-        self.conv1 = nn.Conv2d(3, channels, 3, padding=1)      #the model learns via feature maps like edges, values, shadows etc.
-        self.conv2 = nn.Conv2d(channels, channels, 3, padding=1)    #the following will help combine feature maps it learn new thing combining is hidden feature.
-        self.conv3 = nn.Conv2d(channels, channels, 3, padding=1)
+        self.conv1 = nn.Conv2d(3, channels, 3, padding=1)
+        self.conv2 = nn.Conv2d(channels, channels, 3, padding=2, dilation=2)
+        self.conv3 = nn.Conv2d(channels, channels, 3, padding=2, dilation=2)
         self.conv4 = nn.Conv2d(channels, 3, 3, padding=1)
         self.relu = nn.ReLU(inplace=True)
 
@@ -36,7 +42,7 @@ class CurveNet(nn.Module):
         return alpha
 
 
-def le_curve(x, alpha, iters=8):    #le = light enhancement
+def le_curve(x, alpha, iters=8):
     """Applies the bounded brightening curve iteratively."""
     for _ in range(iters):
         x = x + alpha * x * (1 - x)

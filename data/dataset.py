@@ -1,18 +1,19 @@
-'''
-Stage 1: This program check all the files and images load properly in the given format.
-    LOLDataset/
-            our485/
-                low/    *.png
-                high/   *.png
-            eval15/
-                low/    *.png
-                high/   *.png
- 
+"""
+Stage 1: Data pipeline.
+
+Expects the real LOL dataset layout (this matches what you'll actually download):
+
+    root/
+        our485/
+            low/    *.png
+            high/   *.png
+        eval15/
+            low/    *.png
+            high/   *.png
+
 our485 = training pairs, eval15 = test/validation pairs.
-
 Pairs are matched by filename (low/xyz.png <-> high/xyz.png).
-
-'''
+"""
 
 import random
 from pathlib import Path
@@ -25,12 +26,13 @@ IMG_EXTS = {".png", ".jpg", ".jpeg", ".bmp"}
 
 
 class LowLightPairDataset(Dataset):
-    def __init__(self, root, split="our485", crop_size=256, train=True):
+    def __init__(self, root, split="our485", crop_size=256, train=True, augment=True):
         """
         root: path to the LOL dataset root (the folder that contains our485/ and eval15/)
         split: "our485" (train) or "eval15" (test)
-        crop_size: random-crop size during training; ignored if train=False
-        train: whether to apply random crop + flip augmentation
+        crop_size: crop size when train=True; ignored if train=False
+        train: whether to crop at all (True for training, False for full-image eval)
+        augment: whether the crop or flip are random or not etc
         """
         self.root = Path(root)
         self.split_dir = self.root / split
@@ -38,6 +40,7 @@ class LowLightPairDataset(Dataset):
         self.high_dir = self.split_dir / "high"
         self.crop_size = crop_size
         self.train = train
+        self.augment = augment
 
         if not self.low_dir.exists() or not self.high_dir.exists():
             raise FileNotFoundError(
@@ -71,8 +74,11 @@ class LowLightPairDataset(Dataset):
             raise ValueError(f"Size mismatch for {name}: low={low.size}, high={high.size}")
 
         if self.train:
-            low, high = self._random_crop(low, high, self.crop_size)
-            low, high = self._random_flip(low, high)
+            if self.augment:
+                low, high = self._random_crop(low, high, self.crop_size)
+                low, high = self._random_flip(low, high)
+            else:
+                low, high = self._center_crop(low, high, self.crop_size)
 
         low = TF.to_tensor(low)    # float tensor in [0,1], shape (3,H,W)
         high = TF.to_tensor(high)
@@ -80,7 +86,6 @@ class LowLightPairDataset(Dataset):
 
     @staticmethod
     def _random_crop(low, high, size):
-        '''crops the images randomly and if the images are too small, it adds extra black pixels to it,applied to both low and high'''
         w, h = low.size
         if w < size or h < size:
             # upscale small images rather than failing on out-of-bounds crop
@@ -94,8 +99,20 @@ class LowLightPairDataset(Dataset):
         return low.crop(box), high.crop(box)
 
     @staticmethod
+    def _center_crop(low, high, size):
+        w, h = low.size
+        if w < size or h < size:
+            new_size = (max(w, size), max(h, size))
+            low = low.resize(new_size)
+            high = high.resize(new_size)
+            w, h = low.size
+        x = (w - size) // 2
+        y = (h - size) // 2
+        box = (x, y, x + size, y + size)
+        return low.crop(box), high.crop(box)
+
+    @staticmethod
     def _random_flip(low, high):
-        '''flips images left left to right or vice versa applied to both  low and high'''
         if random.random() < 0.5:
             low = low.transpose(Image.FLIP_LEFT_RIGHT)
             high = high.transpose(Image.FLIP_LEFT_RIGHT)

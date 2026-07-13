@@ -1,13 +1,14 @@
 """
 Stage 2: Baseline training script.
 
-Two modes are  run in this order:
+Two modes, and you should run them in this order:
 
-1. OVERFIT TEST (alway first to be tested):
+1. OVERFIT TEST (do this first, always):
    python train_baseline.py --root /path/to/LOLdataset --overfit_n 8 --epochs 200
 
-   If the model can't drive the loss to 0 for 8 functions then it won't do good on
-   entire dataset even adding improved algorithms such as Retinex, multi-scale, attention.
+   If the model can't drive the loss near zero on 8 memorized images, nothing
+   downstream (Retinex, multi-scale, attention) will work either. This is the
+   cheapest bug-catching step available — don't skip it.
 
 2. FULL TRAINING (only after the overfit test passes):
    python train_baseline.py --root /path/to/LOLdataset --epochs 100
@@ -33,7 +34,8 @@ def main(args):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("device:", device)
 
-    train_ds = LowLightPairDataset(args.root, split="our485", crop_size=args.crop_size, train=True)
+    train_ds = LowLightPairDataset(args.root, split="our485", crop_size=args.crop_size,
+                                    train=True, augment=(args.overfit_n == 0))
 
     if args.overfit_n:
         idx = list(range(min(args.overfit_n, len(train_ds))))
